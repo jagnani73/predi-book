@@ -1,0 +1,68 @@
+@import "tailwindcss";
+
+@theme inline {
+    --font-sans: var(--font-inter);
+    --font-mono: var(--font-jetbrains-mono);
+}
+
+/* Semantic color tokens */
+:root {
+    --color-bg: #09090b;
+    --color-surface-1: #18181b;
+    --color-surface-2: #27272a;
+    --color-border: rgba(255, 255, 255, 0.08);
+    --color-border-strong: rgba(255, 255, 255, 0.14);
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    background: #09090b;
+    color: #ffffff;
+    font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+    width: 4px;
+}
+::-webkit-scrollbar-track {
+    background: #09090b;
+}
+::-webkit-scrollbar-thumb {
+    background: #27272a;
+    border-radius: 2px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #3f3f46;
+}
+
+/* Price flash animation */
+@keyframes price-flash {
+    0% {
+        background-color: rgba(255, 255, 255, 0.1);
+    }
+    100% {
+        background-color: transparent;
+    }
+}
+
+.price-flash {
+    animation: price-flash 600ms ease-out forwards;
+}
+
+/* Respect reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+    }
+}
