@@ -1,0 +1,74 @@
+{
+    "info": {
+        "_postman_id": "predi-book-api",
+        "name": "Predi-Book API",
+        "description": "API collection for the predi-book backend — real-time aggregated order book for Polymarket + Kalshi.\n\nBase URL: http://localhost:8000\nWebSocket: Socket.IO namespace at /orderbook",
+        "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "item": [
+        {
+            "name": "Health",
+            "item": [
+                {
+                    "name": "Health Check",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{BASE_URL}}/healthcheck",
+                            "host": ["{{BASE_URL}}"],
+                            "path": ["healthcheck"]
+                        },
+                        "description": "Returns server uptime, timestamp, and WebSocket stream stats (active rooms + subscriber counts per namespace)."
+                    },
+                    "response": []
+                }
+            ]
+        },
+        {
+            "name": "WebSocket",
+            "item": [
+                {
+                    "name": "Orderbook Feed (/orderbook)",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{WS_URL}}/orderbook",
+                            "host": ["{{WS_URL}}"],
+                            "path": ["orderbook"]
+                        },
+                        "description": "Socket.IO namespace at /orderbook. Use Postman's Socket.IO request type (not HTTP GET — this entry is for documentation only).\n\nConnect to: http://localhost:8000/orderbook\n\nClient events:\n  emit('subscribe', { conditionId, kalshiTicker })\n    → server emits 'subscribed' { success: true, room: '<conditionId>:<kalshiTicker>' }\n    → server immediately emits 'data' with current aggregated book snapshot\n\n  emit('unsubscribe', { conditionId, kalshiTicker })\n    → server emits 'unsubscribed' { success: true, room }\n\nServer events:\n  'data' — AggregatedBook emitted on every order book update:\n  {\n    bids: [{ price, size, venue }],   // sorted desc\n    asks: [{ price, size, venue }],   // sorted asc\n    polymarket: { bids, asks },       // raw Polymarket YES book\n    kalshi:     { bids, asks },       // raw Kalshi YES book (normalised to 0-1)\n    updatedAt: ISO timestamp\n  }\n  venue is one of: 'polymarket' | 'kalshi' | 'both'\n  price is a 0–1 decimal string (e.g. '0.65')\n\n  'subscribed'   — ack for subscribe event\n  'unsubscribed' — ack for unsubscribe event\n  'error'        — { success: false, message }\n\nBehaviour:\n  - First subscriber for a market pair opens one Polymarket WS + one Kalshi WS (singleton)\n  - Subsequent subscribers for the same pair reuse existing connections\n  - When the last subscriber leaves, both WS connections are torn down\n  - On reconnect, connections re-open automatically"
+                    },
+                    "response": []
+                }
+            ]
+        }
+    ],
+    "variable": [
+        {
+            "key": "BASE_URL",
+            "value": "http://localhost:8000",
+            "type": "string",
+            "description": "Backend REST server"
+        },
+        {
+            "key": "WS_URL",
+            "value": "http://localhost:8000",
+            "type": "string",
+            "description": "Same host — Socket.IO uses HTTP upgrade"
+        },
+        {
+            "key": "CONDITION_ID",
+            "value": "",
+            "type": "string",
+            "description": "Polymarket market condition ID (from CLOB REST: GET https://clob.polymarket.com/markets/<slug>)"
+        },
+        {
+            "key": "KALSHI_TICKER",
+            "value": "",
+            "type": "string",
+            "description": "Kalshi market ticker (e.g. KXBTCD-25JAN-T60000)"
+        }
+    ]
+}
