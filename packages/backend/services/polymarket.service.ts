@@ -15,6 +15,7 @@ const CLOB_REST_URL = "https://clob.polymarket.com";
 
 export class PolymarketService {
     private static logger = LoggerService.scoped("PolymarketService");
+    private static instances = new Map<string, PolymarketService>();
 
     private conditionId: string;
     private tokenIds: string[] = [];
@@ -23,38 +24,39 @@ export class PolymarketService {
         bids: new Map(),
         asks: new Map(),
     };
-    private onUpdate: (book: VenueBook) => void;
+    private listeners = new Set<(book: VenueBook) => void>();
     private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     private stopped = false;
 
-    constructor(conditionId: string, onUpdate: (book: VenueBook) => void) {
+    private constructor(conditionId: string) {
         this.conditionId = conditionId;
-        this.onUpdate = onUpdate;
     }
 
-    public async start(): Promise<void> {
-        const info = await PolymarketService.fetchMarketInfo(this.conditionId);
-        // Use the YES token (outcome index 0) for the order book
-        const yesToken =
-            info.tokens.find((t) => t.outcome === "Yes") ?? info.tokens[0];
-        this.tokenIds = [yesToken.token_id];
-
-        PolymarketService.logger.info("starting", {
-            conditionId: this.conditionId,
-            tokenId: yesToken.token_id,
-        });
-
-        this.connect();
-    }
-
-    public stop(): void {
-        this.stopped = true;
-        if (this.reconnectTimer) {
-            clearTimeout(this.reconnectTimer);
-            this.reconnectTimer = null;
+    public static async getOrCreate(
+        conditionId: string,
+    ): Promise<PolymarketService> {
+        if (!this.instances.has(conditionId)) {
+            const svc = new PolymarketService(conditionId);
+            this.instances.set(conditionId, svc);
+            await svc.start();
+            this.logger.info("singleton-created", { conditionId });
         }
-        this.ws?.close();
-        this.ws = null;
+        return this.instances.get(conditionId)!;
+    }
+
+    public addListener(cb: (book: VenueBook) => void): void {
+        this.listeners.add(cb);
+    }
+
+    public removeListener(cb: (book: VenueBook) => void): void {
+        this.listeners.delete(cb);
+        if (this.listeners.size === 0) {
+            PolymarketService.logger.info("no-listeners-stopping", {
+                conditionId: this.conditionId,
+            });
+            this.stop();
+            PolymarketService.instances.delete(this.conditionId);
+        }
     }
 
     public getBook(): VenueBook {
@@ -64,12 +66,39 @@ export class PolymarketService {
         };
     }
 
+    private async start(): Promise<void> {
+        const info = await PolymarketService.fetchMarketInfo(this.conditionId);
+        const yesToken =
+            info.tokens.find((t) => t.outcome === "Yes") ?? info.tokens[0];
+        this.tokenIds = [yesToken.token_id];
+
+        PolymarketService.logger.info("starting", {
+            conditionId: this.conditionId,
+            tokenId: yesToken.token_id,
+        });
+
+        this.stopped = false;
+        this.connect();
+    }
+
+    private stop(): void {
+        this.stopped = true;
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+        }
+        this.ws?.close();
+        this.ws = null;
+    }
+
     private connect(): void {
         const ws = new WebSocket(CLOB_WS_URL);
         this.ws = ws;
 
         ws.on("open", () => {
-            PolymarketService.logger.info("connected");
+            PolymarketService.logger.info("connected", {
+                conditionId: this.conditionId,
+            });
             ws.send(
                 JSON.stringify({
                     assets_ids: this.tokenIds,
@@ -92,12 +121,15 @@ export class PolymarketService {
         });
 
         ws.on("close", () => {
-            PolymarketService.logger.warn("disconnected");
+            PolymarketService.logger.warn("disconnected", {
+                conditionId: this.conditionId,
+            });
             if (!this.stopped) this.scheduleReconnect();
         });
 
         ws.on("error", (err) => {
             PolymarketService.logger.error("ws-error", {
+                conditionId: this.conditionId,
                 message: err.message,
             });
         });
@@ -129,7 +161,8 @@ export class PolymarketService {
     }
 
     private emit(): void {
-        this.onUpdate(this.getBook());
+        const book = this.getBook();
+        for (const cb of this.listeners) cb(book);
     }
 
     private sortedLevels(
@@ -148,12 +181,12 @@ export class PolymarketService {
 
     private scheduleReconnect(): void {
         this.reconnectTimer = setTimeout(() => {
-            PolymarketService.logger.info("reconnecting");
+            PolymarketService.logger.info("reconnecting", {
+                conditionId: this.conditionId,
+            });
             this.connect();
         }, 3000);
     }
-
-    // ------ Static helpers ------
 
     public static async fetchMarketInfo(
         conditionId: string,

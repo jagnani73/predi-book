@@ -7,31 +7,71 @@ import type {
     VenueBook,
 } from "../utils/types/services.types";
 import { LoggerService } from "./logger.service";
+import "dotenv/config";
 import WebSocket from "ws";
 
 const KALSHI_WS_URL = "wss://api.elections.kalshi.com/trade-api/ws/v2";
 
 export class KalshiService {
     private static logger = LoggerService.scoped("KalshiService");
+    private static instances = new Map<string, KalshiService>();
+    private static apiKey: string | undefined = process.env.KALSHI_API_KEY;
 
     private ticker: string;
     private ws: WebSocket | null = null;
     private bookState: KalshiBookState = { yes: new Map(), no: new Map() };
-    private onUpdate: (book: VenueBook) => void;
+    private listeners = new Set<(book: VenueBook) => void>();
     private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     private stopped = false;
 
-    constructor(ticker: string, onUpdate: (book: VenueBook) => void) {
+    private constructor(ticker: string) {
         this.ticker = ticker;
-        this.onUpdate = onUpdate;
     }
 
-    public start(): void {
+    public static getOrCreate(ticker: string): KalshiService {
+        if (!this.instances.has(ticker)) {
+            const svc = new KalshiService(ticker);
+            this.instances.set(ticker, svc);
+            svc.start();
+            this.logger.info("singleton-created", { ticker });
+        }
+        return this.instances.get(ticker)!;
+    }
+
+    public addListener(cb: (book: VenueBook) => void): void {
+        this.listeners.add(cb);
+    }
+
+    public removeListener(cb: (book: VenueBook) => void): void {
+        this.listeners.delete(cb);
+        if (this.listeners.size === 0) {
+            KalshiService.logger.info("no-listeners-stopping", {
+                ticker: this.ticker,
+            });
+            this.stop();
+            KalshiService.instances.delete(this.ticker);
+        }
+    }
+
+    public getBook(): VenueBook {
+        const bids = this.sortedLevels(this.bookState.yes, "desc");
+        const asks = this.sortedLevels(this.bookState.no, "asc", true);
+        return { bids, asks };
+    }
+
+    private start(): void {
+        if (!KalshiService.apiKey) {
+            KalshiService.logger.error("api-key-not-found", {
+                ticker: this.ticker,
+            });
+            return;
+        }
         KalshiService.logger.info("starting", { ticker: this.ticker });
+        this.stopped = false;
         this.connect();
     }
 
-    public stop(): void {
+    private stop(): void {
         this.stopped = true;
         if (this.reconnectTimer) {
             clearTimeout(this.reconnectTimer);
@@ -41,25 +81,15 @@ export class KalshiService {
         this.ws = null;
     }
 
-    public getBook(): VenueBook {
-        // YES side: bids = yes prices (buyers of YES), asks = no prices converted
-        // Kalshi YES price p means NO price is (100-p).
-        // We expose the YES book: bids sorted desc, asks sorted asc.
-        const bids = this.sortedLevels(this.bookState.yes, "desc");
-        const asks = this.sortedLevels(this.bookState.no, "asc", true);
-        return { bids, asks };
-    }
-
     private connect(): void {
         const headers: Record<string, string> = {};
-        const apiKey = process.env.KALSHI_API_KEY;
-        if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
+        headers["Authorization"] = `Bearer ${KalshiService.apiKey}`;
 
         const ws = new WebSocket(KALSHI_WS_URL, { headers });
         this.ws = ws;
 
         ws.on("open", () => {
-            KalshiService.logger.info("connected");
+            KalshiService.logger.info("connected", { ticker: this.ticker });
             ws.send(
                 JSON.stringify({
                     id: 1,
@@ -82,12 +112,15 @@ export class KalshiService {
         });
 
         ws.on("close", () => {
-            KalshiService.logger.warn("disconnected");
+            KalshiService.logger.warn("disconnected", { ticker: this.ticker });
             if (!this.stopped) this.scheduleReconnect();
         });
 
         ws.on("error", (err) => {
-            KalshiService.logger.error("ws-error", { message: err.message });
+            KalshiService.logger.error("ws-error", {
+                ticker: this.ticker,
+                message: err.message,
+            });
         });
     }
 
@@ -119,11 +152,10 @@ export class KalshiService {
     }
 
     private emit(): void {
-        this.onUpdate(this.getBook());
+        const book = this.getBook();
+        for (const cb of this.listeners) cb(book);
     }
 
-    // Convert cent-keyed map to normalised PriceLevel[]
-    // invertPrice=true converts NO price to equivalent YES ask price (100-p)
     private sortedLevels(
         map: Map<number, number>,
         dir: "asc" | "desc",
@@ -146,7 +178,7 @@ export class KalshiService {
 
     private scheduleReconnect(): void {
         this.reconnectTimer = setTimeout(() => {
-            KalshiService.logger.info("reconnecting");
+            KalshiService.logger.info("reconnecting", { ticker: this.ticker });
             this.connect();
         }, 3000);
     }

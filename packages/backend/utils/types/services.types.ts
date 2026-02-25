@@ -31,9 +31,11 @@ export type VenueBook = {
     asks: PriceLevel[];
 };
 
+export type AggregatedLevel = PriceLevel & { venue: "polymarket" | "kalshi" | "both" };
+
 export type AggregatedBook = {
-    bids: (PriceLevel & { venue: "polymarket" | "kalshi" | "both" })[];
-    asks: (PriceLevel & { venue: "polymarket" | "kalshi" | "both" })[];
+    bids: AggregatedLevel[];
+    asks: AggregatedLevel[];
     polymarket: VenueBook;
     kalshi: VenueBook;
     updatedAt: string; // ISO timestamp

@@ -1,18 +1,76 @@
 import { LoggerService, StreamService, WSService } from "../../services";
-import { OrderbookService } from "../../services/orderbook.service";
+import { KalshiService } from "../../services/kalshi.service";
+import { PolymarketService } from "../../services/polymarket.service";
 import type {
     AggregatedBook,
+    AggregatedLevel,
     EmitOrderbookEvent,
+    PriceLevel,
+    VenueBook,
 } from "../../utils/types/services.types";
 import type { Socket } from "socket.io";
 
 const logger = LoggerService.scoped("orderbookMicroservice");
 
-// conditionId:kalshiTicker -> OrderbookService instance
-const activeServices = new Map<string, OrderbookService>();
+type RoomState = {
+    polyBook: VenueBook;
+    kalshiBook: VenueBook;
+    polyListener: (book: VenueBook) => void;
+    kalshiListener: (book: VenueBook) => void;
+    polySvc: PolymarketService;
+    kalshiSvc: KalshiService;
+};
+
+const activeRooms = new Map<string, RoomState>();
 
 function roomKey(conditionId: string, kalshiTicker: string): string {
     return `${conditionId}:${kalshiTicker}`;
+}
+
+function mergeLevels(
+    polyLevels: PriceLevel[],
+    kalshiLevels: PriceLevel[],
+    dir: "asc" | "desc",
+): AggregatedLevel[] {
+    const merged = new Map<string, { polySize: number; kalshiSize: number }>();
+
+    for (const l of polyLevels) {
+        const entry = merged.get(l.price) ?? { polySize: 0, kalshiSize: 0 };
+        entry.polySize += parseFloat(l.size);
+        merged.set(l.price, entry);
+    }
+
+    for (const l of kalshiLevels) {
+        const entry = merged.get(l.price) ?? { polySize: 0, kalshiSize: 0 };
+        entry.kalshiSize += parseFloat(l.size);
+        merged.set(l.price, entry);
+    }
+
+    return Array.from(merged.entries())
+        .map(([price, { polySize, kalshiSize }]) => ({
+            price,
+            size: (polySize + kalshiSize).toFixed(2),
+            venue: (polySize > 0 && kalshiSize > 0
+                ? "both"
+                : polySize > 0
+                  ? "polymarket"
+                  : "kalshi") as AggregatedLevel["venue"],
+        }))
+        .sort((a, b) =>
+            dir === "desc"
+                ? parseFloat(b.price) - parseFloat(a.price)
+                : parseFloat(a.price) - parseFloat(b.price),
+        );
+}
+
+function buildAggregatedBook(state: RoomState): AggregatedBook {
+    return {
+        bids: mergeLevels(state.polyBook.bids, state.kalshiBook.bids, "desc"),
+        asks: mergeLevels(state.polyBook.asks, state.kalshiBook.asks, "asc"),
+        polymarket: state.polyBook,
+        kalshi: state.kalshiBook,
+        updatedAt: new Date().toISOString(),
+    };
 }
 
 export const subscribeEvent = async (
@@ -27,32 +85,58 @@ export const subscribeEvent = async (
         socket.join(room);
         StreamService.addSubscription("orderbook", room, socket.id);
 
-        // Start a new service if this is the first subscriber for this room
-        if (!activeServices.has(room)) {
-            const svc = new OrderbookService(
-                conditionId,
-                kalshiTicker,
-                (book: AggregatedBook) => {
-                    const io = WSService.getNamespace("orderbook");
-                    io?.to(room).emit<EmitOrderbookEvent["type"]>("data", book);
-                },
-            );
-
-            activeServices.set(room, svc);
-
-            // Register cleanup: stop service when last subscriber leaves
-            StreamService.setRoomCleanup("orderbook", room, () => {
-                svc.stop();
-                activeServices.delete(room);
-                log.info("room-cleaned-up", { room });
-            });
-
-            await svc.start();
-        } else {
-            // New subscriber joining an existing room — send current snapshot
-            const current = activeServices.get(room)!.getAggregatedBook();
+        if (activeRooms.has(room)) {
+            const current = buildAggregatedBook(activeRooms.get(room)!);
             socket.emit<EmitOrderbookEvent["type"]>("data", current);
+            log.info("subscribed-existing-room", { socketId: socket.id, room });
+            return;
         }
+        // Fetch singletons first so we can store refs in state
+        const [polySvc, kalshiSvc] = await Promise.all([
+            PolymarketService.getOrCreate(conditionId),
+            Promise.resolve(KalshiService.getOrCreate(kalshiTicker)),
+        ]);
+
+        const state: RoomState = {
+            polyBook: { bids: [], asks: [] },
+            kalshiBook: { bids: [], asks: [] },
+            polyListener: () => {},
+            kalshiListener: () => {},
+            polySvc,
+            kalshiSvc,
+        };
+
+        const emitUpdate = () => {
+            const io = WSService.getNamespace("orderbook");
+            io?.to(room).emit<EmitOrderbookEvent["type"]>(
+                "data",
+                buildAggregatedBook(state),
+            );
+        };
+
+        state.polyListener = (book) => {
+            state.polyBook = book;
+            emitUpdate();
+        };
+        state.kalshiListener = (book) => {
+            state.kalshiBook = book;
+            emitUpdate();
+        };
+
+        polySvc.addListener(state.polyListener);
+        kalshiSvc.addListener(state.kalshiListener);
+
+        activeRooms.set(room, state);
+
+        StreamService.setRoomCleanup("orderbook", room, () => {
+            const s = activeRooms.get(room);
+            if (s) {
+                s.polySvc.removeListener(s.polyListener);
+                s.kalshiSvc.removeListener(s.kalshiListener);
+                activeRooms.delete(room);
+            }
+            log.info("room-cleaned-up", { room });
+        });
 
         socket.emit("subscribed", { success: true, room });
         log.info("subscribed", { socketId: socket.id, room });
@@ -60,7 +144,8 @@ export const subscribeEvent = async (
         log.error("subscribe-error", { error, socketId: socket.id, room });
         socket.emit("subscribed", {
             success: false,
-            message: error instanceof Error ? error.message : "Subscribe failed",
+            message:
+                error instanceof Error ? error.message : "Subscribe failed",
         });
     }
 };
@@ -81,7 +166,10 @@ export const unsubscribeEvent = (
 };
 
 export const disconnectEvent = (socket: Socket): void => {
-    const cleaned = StreamService.removeAllSubscriptions("orderbook", socket.id);
+    const cleaned = StreamService.removeAllSubscriptions(
+        "orderbook",
+        socket.id,
+    );
     logger.scoped("disconnect").info("disconnected", {
         socketId: socket.id,
         cleanedRooms: cleaned,

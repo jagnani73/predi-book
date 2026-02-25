@@ -1,4 +1,4 @@
-import { OrderbookRoutes } from "./microservices/orderbook";
+import { OrderbookRoutes } from "./microservices/orderbook/orderbook.routes";
 import { LoggerService, StreamService, WSService } from "./services";
 import { CORS_CONFIG } from "./utils/constants";
 import { type AppError, convertToAppError, ErrorScope } from "./utils/errors";
