@@ -12,6 +12,7 @@ export type QuoteState = {
     side: QuoteSide
     setSide: (s: QuoteSide) => void
     result: QuoteResult | null
+    midPrice: number | null
 }
 
 export function useQuote(book: AggregatedBook | null): QuoteState {
@@ -23,5 +24,13 @@ export function useQuote(book: AggregatedBook | null): QuoteState {
         return simulateFill(book, amount, side)
     }, [book, amount, side])
 
-    return { amount, setAmount, side, setSide, result }
+    const midPrice = useMemo<number | null>(() => {
+        if (!book) return null
+        const bestBid = book.bids[0]
+        const bestAsk = book.asks[0]
+        if (!bestBid || !bestAsk) return null
+        return (parseFloat(bestBid.price) + parseFloat(bestAsk.price)) / 2
+    }, [book])
+
+    return { amount, setAmount, side, setSide, result, midPrice }
 }

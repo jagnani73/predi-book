@@ -32,6 +32,12 @@ const CONFIG = {
         pulse: true,
         label: "connecting",
     },
+    reconnecting: {
+        container: "bg-orange-500/10 text-orange-400",
+        dot: "bg-orange-400",
+        pulse: true,
+        label: "reconn",
+    },
 }
 
 export function VenueStatusBadge({ venue, status }: Props) {

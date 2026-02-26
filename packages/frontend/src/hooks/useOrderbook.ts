@@ -4,7 +4,12 @@ import { getSocket } from "@/lib/socket";
 import type { AggregatedBook } from "@/lib/types";
 import { useEffect, useRef, useState } from "react";
 
-export type VenueStatus = "connecting" | "live" | "stale" | "offline";
+export type VenueStatus =
+    | "connecting"
+    | "live"
+    | "stale"
+    | "reconnecting"
+    | "offline";
 export type SocketStatus = "connecting" | "connected" | "disconnected";
 
 export type OrderbookState = {
@@ -12,7 +17,16 @@ export type OrderbookState = {
     polyStatus: VenueStatus;
     kalshiStatus: VenueStatus;
     socketStatus: SocketStatus;
+    polyLastUpdated: number;
+    kalshiLastUpdated: number;
+    polyMessageCount: number;
+    kalshiMessageCount: number;
+    updatesPerSec: number;
+    snapshotAt: string | null;
 };
+
+const STALE_MS = 5000;
+const RATE_WINDOW_S = 10;
 
 export function useOrderbook(
     conditionId: string,
@@ -23,14 +37,24 @@ export function useOrderbook(
     const [kalshiStatus, setKalshiStatus] = useState<VenueStatus>("connecting");
     const [socketStatus, setSocketStatus] =
         useState<SocketStatus>("connecting");
+    const [polyLastUpdated, setPolyLastUpdated] = useState<number>(0);
+    const [kalshiLastUpdated, setKalshiLastUpdated] = useState<number>(0);
+    const [polyMessageCount, setPolyMessageCount] = useState<number>(0);
+    const [kalshiMessageCount, setKalshiMessageCount] = useState<number>(0);
+    const [updatesPerSec, setUpdatesPerSec] = useState<number>(0);
+    const [snapshotAt, setSnapshotAt] = useState<string | null>(null);
 
-    // Stale detection refs — no re-render needed, checked on interval
+    // Refs for stale-detection interval (no re-render needed on every update)
     const prevPolyStr = useRef<string>("");
     const prevKalshiStr = useRef<string>("");
-    const polyLastUpdated = useRef<number>(0);
-    const kalshiLastUpdated = useRef<number>(0);
+    const polyLastUpdatedRef = useRef<number>(0);
+    const kalshiLastUpdatedRef = useRef<number>(0);
     const polyEverLive = useRef(false);
     const kalshiEverLive = useRef(false);
+    const socketStatusRef = useRef<SocketStatus>("connecting");
+
+    // Rolling window of message timestamps for update rate
+    const msgTimestamps = useRef<number[]>([]);
 
     useEffect(() => {
         const socket = getSocket("orderbook");
@@ -40,12 +64,12 @@ export function useOrderbook(
         }
 
         function onConnect() {
+            socketStatusRef.current = "connected";
             setSocketStatus("connected");
             subscribe();
         }
 
         function onData(data: AggregatedBook) {
-            // Sort defensively — BE already sorts, but guard against edge cases
             const sorted: AggregatedBook = {
                 ...data,
                 asks: [...data.asks].sort(
@@ -57,26 +81,43 @@ export function useOrderbook(
             };
             setBook(sorted);
 
-            // Venue stale detection: check if sub-books changed
+            // Persist first snapshot timestamp
+            if (data.snapshotAt) {
+                setSnapshotAt((prev) => prev ?? data.snapshotAt!);
+            }
+
+            // Rolling rate window
+            const now = Date.now();
+            msgTimestamps.current.push(now);
+            if (msgTimestamps.current.length > 50) {
+                msgTimestamps.current.shift();
+            }
+
+            // Per-venue change detection
             const polyStr = JSON.stringify(data.polymarket);
             const kalshiStr = JSON.stringify(data.kalshi);
 
             if (polyStr !== prevPolyStr.current) {
                 prevPolyStr.current = polyStr;
-                polyLastUpdated.current = Date.now();
+                polyLastUpdatedRef.current = now;
                 polyEverLive.current = true;
+                setPolyLastUpdated(now);
                 setPolyStatus("live");
+                setPolyMessageCount((c) => c + 1);
             }
 
             if (kalshiStr !== prevKalshiStr.current) {
                 prevKalshiStr.current = kalshiStr;
-                kalshiLastUpdated.current = Date.now();
+                kalshiLastUpdatedRef.current = now;
                 kalshiEverLive.current = true;
+                setKalshiLastUpdated(now);
                 setKalshiStatus("live");
+                setKalshiMessageCount((c) => c + 1);
             }
         }
 
         function onDisconnect() {
+            socketStatusRef.current = "disconnected";
             setSocketStatus("disconnected");
             setPolyStatus("offline");
             setKalshiStatus("offline");
@@ -86,9 +127,10 @@ export function useOrderbook(
         socket.on("data", onData);
         socket.on("disconnect", onDisconnect);
 
-        // Socket may already be connected (singleton reuse)
         if (socket.connected) {
-            setSocketStatus("connected");
+            socketStatusRef.current = "connected";
+            // Defer so we're not calling setState synchronously in effect body
+            queueMicrotask(() => setSocketStatus("connected"));
             subscribe();
         }
 
@@ -100,23 +142,57 @@ export function useOrderbook(
         };
     }, [conditionId, kalshiTicker]);
 
-    // Stale detection: check every second if a venue has gone quiet
+    // Stale detection + rate calculation — runs every second
     useEffect(() => {
         const timer = setInterval(() => {
             const now = Date.now();
-            if (polyEverLive.current && now - polyLastUpdated.current > 5000) {
-                setPolyStatus((s) => (s === "live" ? "stale" : s));
+
+            if (
+                polyEverLive.current &&
+                now - polyLastUpdatedRef.current > STALE_MS
+            ) {
+                const nextStatus =
+                    socketStatusRef.current === "connecting"
+                        ? "reconnecting"
+                        : "stale";
+                setPolyStatus((s) => (s === "live" ? nextStatus : s));
             }
             if (
                 kalshiEverLive.current &&
-                now - kalshiLastUpdated.current > 5000
+                now - kalshiLastUpdatedRef.current > STALE_MS
             ) {
-                setKalshiStatus((s) => (s === "live" ? "stale" : s));
+                const nextStatus =
+                    socketStatusRef.current === "connecting"
+                        ? "reconnecting"
+                        : "stale";
+                setKalshiStatus((s) => (s === "live" ? nextStatus : s));
             }
+
+            // Rolling update rate over last RATE_WINDOW_S seconds
+            const cutoff = now - RATE_WINDOW_S * 1000;
+            msgTimestamps.current = msgTimestamps.current.filter(
+                (t) => t > cutoff,
+            );
+            setUpdatesPerSec(
+                parseFloat(
+                    (msgTimestamps.current.length / RATE_WINDOW_S).toFixed(1),
+                ),
+            );
         }, 1000);
 
         return () => clearInterval(timer);
     }, []);
 
-    return { book, polyStatus, kalshiStatus, socketStatus };
+    return {
+        book,
+        polyStatus,
+        kalshiStatus,
+        socketStatus,
+        polyLastUpdated,
+        kalshiLastUpdated,
+        polyMessageCount,
+        kalshiMessageCount,
+        updatesPerSec,
+        snapshotAt,
+    };
 }

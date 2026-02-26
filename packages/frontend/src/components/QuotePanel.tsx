@@ -2,15 +2,26 @@
 
 import { formatPrice, formatUsd } from "@/lib/format"
 import type { QuoteState } from "@/hooks/useQuote"
+import type { AggregatedBook } from "@/lib/types"
 import { FillBreakdown } from "./FillBreakdown"
 
 type Props = {
     quote: QuoteState
     isConnecting: boolean
+    book: AggregatedBook | null
 }
 
-export function QuotePanel({ quote, isConnecting }: Props) {
-    const { amount, setAmount, side, setSide, result } = quote
+export function QuotePanel({ quote, isConnecting, book }: Props) {
+    const { amount, setAmount, side, setSide, result, midPrice } = quote
+
+    // Total depth for price impact bar
+    const totalDepth =
+        book && result
+            ? (side === "YES" ? book.asks : book.bids).reduce(
+                  (acc, l) => acc + parseFloat(l.size),
+                  0,
+              )
+            : 0
 
     return (
         <div className="flex flex-col gap-4 rounded-xl border border-white/8 bg-zinc-900 p-4 lg:sticky lg:top-[73px]">
@@ -106,7 +117,11 @@ export function QuotePanel({ quote, isConnecting }: Props) {
                         </div>
                     </div>
 
-                    <FillBreakdown result={result} />
+                    <FillBreakdown
+                        result={result}
+                        midPrice={midPrice}
+                        totalDepth={totalDepth}
+                    />
                 </div>
             ) : (
                 <div className="flex h-24 flex-col items-center justify-center gap-1 border-t border-white/6 pt-4">

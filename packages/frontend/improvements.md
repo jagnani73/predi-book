@@ -1,372 +1,348 @@
-1. Venue Health + Freshness Indicators
-   1.1 Per Venue “Last Updated”
-   What to Add
+# Prediction Market Aggregator — UI & UX Improvements Spec
 
-Under each venue badge:
+This document outlines recommended improvements to enhance:
 
-Polymarket
-Last update: 2.3s ago
+- Aggregation transparency
+- Venue health visibility
+- Liquidity clarity
+- Quote correctness
+- Long-running robustness
+- Debuggability
 
-Kalshi
-Last update: 1.1s ago
+---
 
-Color coded:
+# 1. Venue Health & Freshness Indicators
 
-<2s green
+## 1.1 Per-Venue Last Updated Timestamp
 
-2–5s amber
+### Add
 
-5s red
+Display a dynamic timestamp per venue:
 
-Why
+Polymarket  
+Last update: 1.4s ago
 
-Spec explicitly requires visibility when one venue stops updating.
+Kalshi  
+Last update: 3.2s ago
 
-Right now “live” is static and not meaningful.
+### Behavior
 
-How
+- < 2s → green
+- 2–5s → amber
+- > 5s → red
 
-Track per venue:
+### Implementation
 
-const [lastUpdateTs, setLastUpdateTs] = useState<Record<string, number>>({})
+- Store `lastUpdateTs` per venue.
+- Update on each book message.
+- Recalculate elapsed time via `setInterval` every 1 second.
 
-Update on every new book message.
+```ts
+const [lastUpdateTs, setLastUpdateTs] = useState<Record<string, number>>({});
 
-Render:
+Date.now() - lastUpdateTs["poly"];
+```
 
-Date.now() - lastUpdateTs["poly"]
+## 1.2 Venue Connection Status State
 
-Recompute every 1 second via setInterval.
+### Add
 
-1.2 Venue Status State Machine
-What to Add
+Explicit connection states per venue:
 
-Statuses:
+- CONNECTED
+- STALE
+- DISCONNECTED
+- RECONNECTING
 
-CONNECTED
+Display a status badge near each venue tab.
 
-STALE
+### Behavior
 
-DISCONNECTED
+- No update > threshold → STALE
+- WebSocket closed → DISCONNECTED
+- Attempting reconnect → RECONNECTING
+- Receiving updates → CONNECTED
 
-RECONNECTING
+### Implementation
 
-Show as a small dot + label near venue tabs.
+Maintain a per-venue state machine and update based on WebSocket lifecycle events.
 
-Why
-
-Demonstrates robustness thinking.
-Directly addresses requirement #4.
-
-How
-
-Maintain:
-
+```ts
 type VenueStatus = "connected" | "stale" | "disconnected" | "reconnecting";
+```
 
-If no update > X seconds → stale.
-If socket closes → disconnected.
-On reconnect attempt → reconnecting.
+## 1.3 Total Messages Received
 
-1.3 Total Messages Received
-What to Add
+### Add
 
-Small debug footer:
+Display cumulative message count per venue:
 
-Polymarket: 12,431 updates
+Polymarket: 12,431 updates  
 Kalshi: 10,993 updates
 
-Why
+### Purpose
 
-Signals long-running reliability and streaming stability.
+Signals long-running stability and streaming correctness.
 
-How
+### Implementation
 
-Increment counter per message:
+Increment counter per update event.
 
-const [messageCount, setMessageCount] = useState<Record<string, number>>({}) 2. Aggregation Transparency Improvements
-2.1 Explicit Best Bid / Best Ask Attribution
-What to Add
+```ts
+const [messageCount, setMessageCount] = useState<Record<string, number>>({});
+```
 
-Above book:
+---
 
-Best Bid: 0.59 (Polymarket)
+# 2. Aggregation Transparency
+
+## 2.1 Explicit Best Bid / Ask Attribution
+
+### Add
+
+Above the book:
+
+Best Bid: 0.59 (Polymarket)  
 Best Ask: 0.64 (Kalshi)
 
-Why
+### Purpose
 
-Currently spread is shown but venue source is unclear.
+Clarifies which venue sets the top of book.
 
-Spec requires users to understand how venues differ.
+### Implementation
 
-How
+Compute combined best levels and store origin venue.
 
-When computing combined book:
+```ts
+const bestBid = max([...polyBids, ...kalshiBids]);
+```
 
-const bestBid = max([...polyBids, ...kalshiBids])
+## 2.2 Cross-Venue Price Improvement Indicator
 
-Store origin venue.
+### Add
 
-2.2 Cross Venue Price Improvement Indicator
-What to Add
+If aggregation improves price:
 
-If combined best price is better than either venue alone:
+Aggregated book improves best ask by 0.01 vs Polymarket alone.
 
-“Aggregated book improves best ask by 0.01 vs Polymarket alone”
+### Purpose
 
-Why
+Demonstrates value of aggregation.
 
-Shows value of aggregation.
-Strong differentiator.
+## 2.3 Per-Level Venue Contribution
 
-2.3 Combined Depth Percentage
-What to Add
+### Add
 
 At each price level show:
 
-Total size: 1,200
-PM: 60%
+Total size: 1,200  
+PM: 60%  
 KX: 40%
 
-Why
+### Purpose
 
-Right now venue tags show existence but not weight.
+Improves liquidity distribution visibility.
 
-This improves liquidity concentration visibility.
+---
 
-3. Liquidity Concentration Improvements
-   3.1 Cumulative Depth Display
-   What to Add
+# 3. Liquidity Clarity Improvements
+
+## 3.1 Cumulative Depth Display
+
+### Add
 
 On hover or side column:
 
 Cumulative size at this level: 4,832
 
-Why
+### Purpose
 
-Spec explicitly says users should understand liquidity concentration.
+Helps users understand liquidity concentration.
 
-Cumulative depth makes this obvious.
+### Implementation
 
-How
+Precompute cumulative sums during render.
 
-Precompute cumulative sum when rendering rows.
+## 3.2 Depth Imbalance Indicator
 
-3.2 Depth Imbalance Indicator
-What to Add
+### Add
 
-Above book:
-
-Bid depth (top 5): 4,921
-Ask depth (top 5): 3,102
+Bid depth (top N): 4,921  
+Ask depth (top N): 3,102  
 Imbalance: +37%
 
-Why
+### Purpose
 
-Adds professional market insight.
+Provides directional market signal.
 
-3.3 Mini Depth Curve Chart
+## 3.3 Mini Depth Curve Chart
 
-Small right aligned sparkline showing cumulative depth.
+### Add
 
-This is visually powerful and signals thoughtfulness.
+Small cumulative depth chart beside book.
 
-4. Quote Engine Enhancements
-   4.1 Execution Path Breakdown
-   What to Add
+### Purpose
 
-Under shares:
+Visually highlights liquidity walls.
+
+---
+
+# 4. Quote Engine Enhancements
+
+## 4.1 Execution Path Breakdown
+
+### Add
 
 Execution breakdown:
 
-1.12 @ 0.64 (PM)
+- 1.12 @ 0.64 (PM)
+- 1.86 @ 0.65 (KX)
 
-1.86 @ 0.65 (KX)
+### Purpose
 
-Why
+Shows level-by-level fill simulation.
 
-Right now split is shown only as dollar per venue.
-Not price level granular.
+## 4.2 Slippage Preview
 
-Spec wants fill across venues clearly shown.
+### Add
 
-4.2 Slippage Preview
-What to Add
-
-Effective price: 0.638
-Mid price: 0.620
+Effective price: 0.638  
+Mid price: 0.620  
 Slippage: +2.9%
 
-Why
+### Purpose
 
-Demonstrates pricing awareness.
+Improves pricing transparency.
 
-4.3 Liquidity Exhaustion Warning
+## 4.3 Liquidity Exhaustion Warning
 
-If amount > available depth:
+### Add
 
-“Insufficient liquidity to fully fill order”
+If order exceeds depth:
 
-Important for correctness.
+Insufficient liquidity to fully fill order.
 
-4.4 Price Impact Visual
+### Purpose
 
-Small bar showing how deep into book you consume.
+Prevents misleading quotes.
 
-Adds clarity to quote logic.
+## 4.4 Price Impact Visualization
 
-5. Long Running Behavior Improvements
-   5.1 Snapshot Refresh Timer
+### Add
 
-Show:
+Bar or indicator showing how deep into the book the order consumes liquidity.
+
+---
+
+# 5. Long-Running Behavior Indicators
+
+## 5.1 Snapshot Timestamp
+
+### Add
 
 Last full snapshot: 2m ago
 
-Even if you mock it.
+### Purpose
 
-Signals resilience thinking.
+Signals state recovery and resilience.
 
-5.2 Update Frequency Indicator
+## 5.2 Update Frequency Indicator
 
-Show:
+### Add
 
-Updates/sec: 4.2 (avg last 10s)
+Updates/sec: 4.2 (rolling average)
 
-Demonstrates stream stability.
+### Purpose
 
-5.3 Auto Reconnect Banner
+Shows streaming stability.
 
-If venue stale:
+## 5.3 Reconnect Banner
 
-“Kalshi connection stale — reconnecting…”
+### Add
 
-Even if simulated.
+If venue becomes stale:
 
-5.4 Memory Guard
+Kalshi connection stale — reconnecting...
 
-Display:
+### Purpose
 
-Current book levels: 12
+Explicit degradation visibility.
+
+## 5.4 Memory Guard
+
+### Add
+
+Current book levels: 12  
 Max allowed: 50
 
-Signals you’re bounding memory.
+### Purpose
 
-6. Market Structure Clarity
-   6.1 Show YES vs NO Parity
+Signals bounded memory handling.
 
-Add small toggle to flip book view.
+---
 
-Currently YES selected but book perspective is implicit.
+# 6. Market Structure Enhancements
 
-6.2 Show Implied Probability
+## 6.1 YES / NO Book Perspective Toggle
 
-Near mid:
+Allow flipping the order book between YES and NO.
 
-Mid: 0.62
+## 6.2 Implied Probability Display
+
+Mid: 0.62  
 Implied probability: 62%
 
-Simple but user friendly.
+## 6.3 Tick Size Disclosure
 
-6.3 Show Tick Size
+Display normalized tick size:
 
-Small footer:
+Tick size: 0.01
 
-Tick size: 0.01 (normalized)
+---
 
-Signals reconciliation.
+# 7. Debug Mode Toggle
 
-7. Debug Mode Toggle
+Add a "Dev Mode" toggle that reveals:
 
-Add a small “Dev” toggle:
+- Raw Polymarket book
+- Raw Kalshi book
+- Normalized combined book
+- Message counts
+- Last update timestamps
+- Venue status states
 
-When enabled show:
+---
 
-Raw venue books
+# 8. Mock Data Realism Improvements
 
-Normalized book
+## 8.1 Variable Depth Levels
 
-Reconciliation deltas
+Randomize number of levels per update.
 
-Message count
-
-Last update timestamps
-
-This strongly signals engineering maturity.
-
-8. Mocking Improvements (Given Your Code)
-
-Your current generator:
-
-3 poly bids
-
-2 kalshi bids
-
-Fixed offsets
-
-Improvements:
-
-8.1 Variable Depth Size
-
-Randomize number of levels:
-
+```ts
 const levels = Math.floor(Math.random() \* 5) + 2;
-8.2 Random Order Removal
+```
 
-Sometimes drop a level entirely to simulate cancel.
+## 8.2 Random Order Removal
 
-8.3 Occasionally Shift Centre
+Occasionally remove a level to simulate cancels.
 
-Simulate trending market:
+## 8.3 Gradual Center Drift
 
-centre += (Math.random() - 0.5) \* 0.002
+Slowly shift price center over time to simulate trending markets.
 
-This makes UI more convincingly live.
+```ts
+centre += (Math.random() - 0.5) * 0.002;
+```
 
-9. UI Polish Improvements
-   9.1 Animate Row Updates
+---
 
-Flash green/red when size changes.
+# High-Impact Additions (If Time Constrained)
 
-9.2 Highlight Changed Levels
+If only implementing a few upgrades, prioritize:
 
-Temporary highlight if price updates.
+1. Per-venue last updated + connection state
+2. Execution breakdown per price level
+3. Cumulative depth display
 
-9.3 Smooth Depth Bar Transitions
-
-CSS transition width for visual polish.
-
-10. High Impact Additions
-
-If you add only three things, add these:
-
-Per venue last update + status
-
-Execution breakdown per level
-
-Cumulative depth
-
-Those alone move you from good to excellent.
-
-Summary
-
-You already have:
-
-Correct structural layout
-
-Combined book concept
-
-Quote simulator with split
-
-What you need now is:
-
-Visibility into health and freshness
-
-Transparency of aggregation mechanics
-
-Microstructure insight
-
-Long running robustness signals
-
-More granular quote breakdown
-
-If implemented cleanly, this becomes a very strong submission rather than just a clean UI demo.
+These provide the strongest perceived improvement in correctness and robustness.

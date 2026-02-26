@@ -20,6 +20,9 @@ type RoomState = {
     kalshiListener: (book: VenueBook) => void;
     polySvc?: PolymarketService;
     kalshiSvc?: KalshiService;
+    polymarketUpdatedAt?: string;
+    kalshiUpdatedAt?: string;
+    snapshotAt?: string;
 };
 
 const activeRooms = new Map<string, RoomState>();
@@ -71,6 +74,9 @@ function buildAggregatedBook(state: RoomState): AggregatedBook {
         polymarket: state.polyBook,
         kalshi: state.kalshiBook,
         updatedAt: new Date().toISOString(),
+        polymarketUpdatedAt: state.polymarketUpdatedAt,
+        kalshiUpdatedAt: state.kalshiUpdatedAt,
+        snapshotAt: state.snapshotAt,
     };
 }
 
@@ -107,6 +113,10 @@ export const subscribeEvent = async (
                 const { polyBook, kalshiBook } = generateMockBooks();
                 state.polyBook = polyBook;
                 state.kalshiBook = kalshiBook;
+                const now = new Date().toISOString();
+                state.polymarketUpdatedAt = now;
+                state.kalshiUpdatedAt = now;
+                if (!state.snapshotAt) state.snapshotAt = now;
                 const io = WSService.getNamespace("orderbook");
                 io?.to(room).emit<EmitOrderbookEvent["type"]>(
                     "data",
@@ -151,10 +161,14 @@ export const subscribeEvent = async (
 
         state.polyListener = (book) => {
             state.polyBook = book;
+            state.polymarketUpdatedAt = new Date().toISOString();
+            if (!state.snapshotAt) state.snapshotAt = state.polymarketUpdatedAt;
             emitUpdate();
         };
         state.kalshiListener = (book) => {
             state.kalshiBook = book;
+            state.kalshiUpdatedAt = new Date().toISOString();
+            if (!state.snapshotAt) state.snapshotAt = state.kalshiUpdatedAt;
             emitUpdate();
         };
 

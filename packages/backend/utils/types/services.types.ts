@@ -23,7 +23,7 @@ export interface SocketRoutes {
 
 export type PriceLevel = {
     price: string; // 0–1 as string (e.g. "0.65")
-    size: string;  // USDC size as string
+    size: string; // USDC size as string
 };
 
 export type VenueBook = {
@@ -31,20 +31,25 @@ export type VenueBook = {
     asks: PriceLevel[];
 };
 
-export type AggregatedLevel = PriceLevel & { venue: "polymarket" | "kalshi" | "both" };
+export type AggregatedLevel = PriceLevel & {
+    venue: "polymarket" | "kalshi" | "both";
+};
 
 export type AggregatedBook = {
     bids: AggregatedLevel[];
     asks: AggregatedLevel[];
     polymarket: VenueBook;
     kalshi: VenueBook;
-    updatedAt: string; // ISO timestamp
+    updatedAt: string; // ISO — last emit time
+    polymarketUpdatedAt?: string; // ISO — when Polymarket last sent a delta
+    kalshiUpdatedAt?: string; // ISO — when Kalshi last sent a delta
+    snapshotAt?: string; // ISO — when the first full snapshot was received
 };
 
 export type SubscribeOrderbookEvent = {
     type: "subscribe";
     payload: {
-        conditionId: string;  // Polymarket condition ID
+        conditionId: string; // Polymarket condition ID
         kalshiTicker: string; // Kalshi market ticker
     };
 };
@@ -70,8 +75,8 @@ export type KalshiOrderbookDelta = {
     type: "orderbook_delta";
     msg: {
         market_ticker: string;
-        price: number;       // cents
-        delta: number;       // signed quantity change
+        price: number; // cents
+        delta: number; // signed quantity change
         side: "yes" | "no";
     };
 };
@@ -90,7 +95,8 @@ export type KalshiBookState = {
 // Polymarket
 // ------------------------------
 export type BookLevel = {
-    price: string; size: string
+    price: string;
+    size: string;
 };
 
 export type PolymarketBookMessage = {
@@ -106,7 +112,8 @@ export type PolymarketPriceChangeMessage = {
     asset_id: string;
     changes: {
         price: string;
-        side: "BUY" | "SELL"; size: string
+        side: "BUY" | "SELL";
+        size: string;
     }[];
 };
 
@@ -114,18 +121,19 @@ export type PolymarketMessage =
     | PolymarketBookMessage
     | PolymarketPriceChangeMessage
     | {
-        event_type: string;
-    };
+          event_type: string;
+      };
 
 export type PolymarketMarketInfo = {
     conditionId: string;
     question: string;
     tokens: {
         token_id: string;
-        outcome: string
+        outcome: string;
     }[];
 };
 
 export type PolymarketBookState = {
-    bids: Map<string, string>; asks: Map<string, string>
+    bids: Map<string, string>;
+    asks: Map<string, string>;
 };
