@@ -8,6 +8,7 @@ import type {
     PriceLevel,
     VenueBook,
 } from "../../utils/types/services.types";
+import { generateMockBooks, isMockMarket } from "./mock-markets";
 import type { Socket } from "socket.io";
 
 const logger = LoggerService.scoped("orderbookMicroservice");
@@ -17,8 +18,8 @@ type RoomState = {
     kalshiBook: VenueBook;
     polyListener: (book: VenueBook) => void;
     kalshiListener: (book: VenueBook) => void;
-    polySvc: PolymarketService;
-    kalshiSvc: KalshiService;
+    polySvc?: PolymarketService;
+    kalshiSvc?: KalshiService;
 };
 
 const activeRooms = new Map<string, RoomState>();
@@ -88,9 +89,43 @@ export const subscribeEvent = async (
         if (activeRooms.has(room)) {
             const current = buildAggregatedBook(activeRooms.get(room)!);
             socket.emit<EmitOrderbookEvent["type"]>("data", current);
+            socket.emit("subscribed", { success: true, room });
             log.info("subscribed-existing-room", { socketId: socket.id, room });
             return;
         }
+
+        // Mock market path — no real venue connections
+        if (isMockMarket(conditionId)) {
+            const state: RoomState = {
+                polyBook: { bids: [], asks: [] },
+                kalshiBook: { bids: [], asks: [] },
+                polyListener: () => {},
+                kalshiListener: () => {},
+            };
+
+            const interval = setInterval(() => {
+                const { polyBook, kalshiBook } = generateMockBooks();
+                state.polyBook = polyBook;
+                state.kalshiBook = kalshiBook;
+                const io = WSService.getNamespace("orderbook");
+                io?.to(room).emit<EmitOrderbookEvent["type"]>(
+                    "data",
+                    buildAggregatedBook(state),
+                );
+            }, 600);
+
+            StreamService.setRoomCleanup("orderbook", room, () => {
+                clearInterval(interval);
+                activeRooms.delete(room);
+                log.info("mock-room-cleaned-up", { room });
+            });
+
+            activeRooms.set(room, state);
+            socket.emit("subscribed", { success: true, room });
+            log.info("subscribed-mock", { socketId: socket.id, room });
+            return;
+        }
+
         // Fetch singletons first so we can store refs in state
         const [polySvc, kalshiSvc] = await Promise.all([
             PolymarketService.getOrCreate(conditionId),
@@ -131,8 +166,8 @@ export const subscribeEvent = async (
         StreamService.setRoomCleanup("orderbook", room, () => {
             const s = activeRooms.get(room);
             if (s) {
-                s.polySvc.removeListener(s.polyListener);
-                s.kalshiSvc.removeListener(s.kalshiListener);
+                s.polySvc?.removeListener(s.polyListener);
+                s.kalshiSvc?.removeListener(s.kalshiListener);
                 activeRooms.delete(room);
             }
             log.info("room-cleaned-up", { room });
