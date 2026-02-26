@@ -30,8 +30,14 @@ export default function MarketPage({ params }: Props) {
         kalshiMessageCount,
         updatesPerSec,
         snapshotAt,
+        reconnectAttempt,
     } = useOrderbook(conditionId, kalshiTicker);
     const quote = useQuote(book);
+
+    // Prices consumed by the active quote — for BookRow fill shading
+    const filledPrices = quote.result
+        ? new Set(quote.result.fills.map((f) => f.price.toFixed(4)))
+        : undefined;
 
     const [devMode, setDevMode] = useState(false);
 
@@ -75,6 +81,9 @@ export default function MarketPage({ params }: Props) {
                         kalshiMessageCount={kalshiMessageCount}
                         updatesPerSec={updatesPerSec}
                         snapshotAt={snapshotAt}
+                        reconnectAttempt={reconnectAttempt}
+                        filledPrices={filledPrices}
+                        quoteSide={quote.side}
                     />
                     <QuotePanel
                         quote={quote}

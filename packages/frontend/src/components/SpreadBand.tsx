@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import type { AggregatedLevel } from "@/lib/types"
 import { formatPrice, formatRelative } from "@/lib/format"
 
@@ -17,6 +17,7 @@ type Props = {
     kalshiMessageCount?: number
     updatesPerSec?: number
     snapshotAt?: string | null
+    liquidityAdvantage?: string | null
 }
 
 function useElapsed(tsMs: number): string {
@@ -52,6 +53,9 @@ function fmtCount(n: number | undefined): string {
     return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
 }
 
+/** Track last N mid values with timestamps for drift calculation */
+const MID_HISTORY_S = 120 // 2-minute window
+
 export function SpreadBand({
     bestBid,
     bestAsk,
@@ -65,6 +69,7 @@ export function SpreadBand({
     kalshiMessageCount,
     updatesPerSec,
     snapshotAt,
+    liquidityAdvantage,
 }: Props) {
     const bidPrice = bestBid ? parseFloat(bestBid.price) : null
     const askPrice = bestAsk ? parseFloat(bestAsk.price) : null
@@ -105,6 +110,34 @@ export function SpreadBand({
         : aggAskBetter
           ? (soloMinAsk - askPrice!).toFixed(4)
           : null
+    const improvementSide = aggBidBetter ? "bid" : aggAskBetter ? "ask" : null
+
+    // §R2-8 Drift indicator — track mid history and compute trend
+    const midHistory = useRef<{ ts: number; mid: number }[]>([])
+    const [drift, setDrift] = useState<{ dir: "↑" | "↓" | "→"; pct: number } | null>(null)
+
+    useEffect(() => {
+        if (midVal === null) return
+        const now = Date.now()
+        midHistory.current.push({ ts: now, mid: midVal })
+        // Prune old entries
+        const cutoff = now - MID_HISTORY_S * 1000
+        midHistory.current = midHistory.current.filter((e) => e.ts > cutoff)
+        // Need at least 10s of history to show drift
+        if (midHistory.current.length < 2) return
+        const oldest = midHistory.current[0]
+        const elapsed = (now - oldest.ts) / 1000
+        if (elapsed < 10) return
+        const changePct = ((midVal - oldest.mid) / oldest.mid) * 100
+        if (Math.abs(changePct) < 0.1) {
+            setDrift({ dir: "→", pct: 0 })
+        } else {
+            setDrift({
+                dir: changePct > 0 ? "↑" : "↓",
+                pct: Math.abs(changePct),
+            })
+        }
+    }, [midVal])
 
     const polyElapsed = useElapsed(polyLastUpdated)
     const kalshiElapsed = useElapsed(kalshiLastUpdated)
@@ -127,6 +160,13 @@ export function SpreadBand({
                                     ({(midVal * 100).toFixed(1)}%)
                                 </span>
                             )}
+                            {drift && drift.dir !== "→" && (
+                                <span
+                                    className={`ml-1.5 text-[10px] ${drift.dir === "↑" ? "text-green-400" : "text-red-400"}`}
+                                >
+                                    {drift.dir} {drift.pct.toFixed(2)}%
+                                </span>
+                            )}
                         </span>
                         <span className="text-zinc-700">·</span>
                         <span className="text-zinc-700">TICK 0.01</span>
@@ -136,44 +176,81 @@ export function SpreadBand({
                 )}
             </div>
 
-            {/* Best bid/ask attribution */}
-            {(bestBid || bestAsk) && (
-                <div className="mt-1.5 flex justify-between px-4 text-[10px]">
-                    <span className="text-zinc-600">
-                        Best Bid{" "}
-                        <span className="text-green-400/70">
-                            {bestBid ? formatPrice(bestBid.price) : "—"}
-                        </span>{" "}
-                        <span className="text-zinc-700">({bestBidVenue})</span>
-                    </span>
-                    <span className="text-zinc-600">
-                        Best Ask{" "}
-                        <span className="text-red-400/70">
-                            {bestAsk ? formatPrice(bestAsk.price) : "—"}
-                        </span>{" "}
-                        <span className="text-zinc-700">({bestAskVenue})</span>
-                    </span>
-                </div>
-            )}
+            {/* §R2-2 Explicit venue best comparison panel — always rendered for stable height */}
+            <div className="mt-1.5 grid grid-cols-3 gap-0 border-t border-white/4 px-4 pt-1.5 text-[10px]">
+                {/* Header row */}
+                <span className="text-zinc-700" />
+                <span className="text-center text-zinc-700">Best Bid</span>
+                <span className="text-center text-zinc-700">Best Ask</span>
 
-            {/* Cross-venue improvement chip */}
-            {improvementDelta && (
-                <div className="mt-1 flex justify-center">
+                {/* Polymarket row */}
+                <span className="text-indigo-500/70">PM</span>
+                <span
+                    className={`text-center ${bestBidVenue === "PM" ? "text-green-300" : "text-zinc-500"}`}
+                >
+                    {fmtPx(polyBestBid)}
+                    {bestBidVenue === "PM" && (
+                        <span className="ml-0.5 text-green-400/60">★</span>
+                    )}
+                </span>
+                <span
+                    className={`text-center ${bestAskVenue === "PM" ? "text-red-300" : "text-zinc-500"}`}
+                >
+                    {fmtPx(polyBestAsk)}
+                    {bestAskVenue === "PM" && (
+                        <span className="ml-0.5 text-red-400/60">★</span>
+                    )}
+                </span>
+
+                {/* Kalshi row */}
+                <span className="text-violet-500/70">KX</span>
+                <span
+                    className={`text-center ${bestBidVenue === "KX" ? "text-green-300" : "text-zinc-500"}`}
+                >
+                    {fmtPx(kalshiBestBid)}
+                    {bestBidVenue === "KX" && (
+                        <span className="ml-0.5 text-green-400/60">★</span>
+                    )}
+                </span>
+                <span
+                    className={`text-center ${bestAskVenue === "KX" ? "text-red-300" : "text-zinc-500"}`}
+                >
+                    {fmtPx(kalshiBestAsk)}
+                    {bestAskVenue === "KX" && (
+                        <span className="ml-0.5 text-red-400/60">★</span>
+                    )}
+                </span>
+
+                {/* Combined row */}
+                <span className="text-zinc-600">Combined</span>
+                <span className="text-center text-green-400/80">
+                    {bestBid ? formatPrice(bestBid.price) : "—"}
+                </span>
+                <span className="text-center text-red-400/80">
+                    {bestAsk ? formatPrice(bestAsk.price) : "—"}
+                </span>
+            </div>
+
+            {/* Cross-venue improvement + liquidity chips — fixed height container prevents layout shift */}
+            <div className="mt-1 flex min-h-[20px] flex-col items-center gap-1">
+                {improvementDelta && (
                     <span className="rounded bg-green-500/10 px-1.5 py-0.5 text-[10px] text-green-400">
-                        ↑ {improvementDelta} improvement via aggregation
+                        ↑ {improvementDelta} improvement on {improvementSide} via aggregation
                     </span>
-                </div>
-            )}
+                )}
+                {liquidityAdvantage && (
+                    <span className="rounded bg-indigo-500/8 px-1.5 py-0.5 text-[10px] text-indigo-400/80">
+                        {liquidityAdvantage}
+                    </span>
+                )}
+            </div>
 
             {/* Per-venue freshness + counts */}
-            <div className="mt-1.5 flex justify-between px-4 text-[10px]">
+            <div className="mt-1.5 flex justify-between border-t border-white/4 px-4 pt-1.5 text-[10px]">
                 <span className="flex items-center gap-1.5">
                     <span className="text-indigo-500/70">PM</span>
                     <span className={elapsedColor(polyLastUpdated)}>
                         {polyElapsed}
-                    </span>
-                    <span className="text-zinc-700">
-                        {fmtPx(polyBestBid)} / {fmtPx(polyBestAsk)}
                     </span>
                     <span className="text-zinc-700">
                         {fmtCount(polyMessageCount)} upd
@@ -182,9 +259,6 @@ export function SpreadBand({
                 <span className="flex items-center gap-1.5">
                     <span className="text-zinc-700">
                         {fmtCount(kalshiMessageCount)} upd
-                    </span>
-                    <span className="text-zinc-700">
-                        {fmtPx(kalshiBestBid)} / {fmtPx(kalshiBestAsk)}
                     </span>
                     <span className={elapsedColor(kalshiLastUpdated)}>
                         {kalshiElapsed}

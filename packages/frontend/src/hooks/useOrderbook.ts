@@ -23,6 +23,7 @@ export type OrderbookState = {
     kalshiMessageCount: number;
     updatesPerSec: number;
     snapshotAt: string | null;
+    reconnectAttempt: number;
 };
 
 const STALE_MS = 5000;
@@ -43,6 +44,7 @@ export function useOrderbook(
     const [kalshiMessageCount, setKalshiMessageCount] = useState<number>(0);
     const [updatesPerSec, setUpdatesPerSec] = useState<number>(0);
     const [snapshotAt, setSnapshotAt] = useState<string | null>(null);
+    const [reconnectAttempt, setReconnectAttempt] = useState<number>(0);
 
     // Refs for stale-detection interval (no re-render needed on every update)
     const prevPolyStr = useRef<string>("");
@@ -123,9 +125,19 @@ export function useOrderbook(
             setKalshiStatus("offline");
         }
 
+        function onReconnectAttempt(attempt: number) {
+            setReconnectAttempt(attempt);
+        }
+
+        function onReconnect() {
+            setReconnectAttempt(0);
+        }
+
         socket.on("connect", onConnect);
         socket.on("data", onData);
         socket.on("disconnect", onDisconnect);
+        socket.io.on("reconnect_attempt", onReconnectAttempt);
+        socket.io.on("reconnect", onReconnect);
 
         if (socket.connected) {
             socketStatusRef.current = "connected";
@@ -139,6 +151,8 @@ export function useOrderbook(
             socket.off("connect", onConnect);
             socket.off("data", onData);
             socket.off("disconnect", onDisconnect);
+            socket.io.off("reconnect_attempt", onReconnectAttempt);
+            socket.io.off("reconnect", onReconnect);
         };
     }, [conditionId, kalshiTicker]);
 
@@ -194,5 +208,6 @@ export function useOrderbook(
         kalshiMessageCount,
         updatesPerSec,
         snapshotAt,
+        reconnectAttempt,
     };
 }

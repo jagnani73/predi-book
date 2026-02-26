@@ -10,6 +10,10 @@ type Props = {
     side: "bid" | "ask"
     cumulativeSize?: number
     venueSplit?: { pm: number; kx: number }
+    /** Row is consumed by the active quote simulation */
+    isFilled?: boolean
+    /** Level size exceeds 2× average — liquidity wall */
+    isWall?: boolean
 }
 
 const VENUE_STYLES = {
@@ -24,6 +28,8 @@ function BookRowComponent({
     side,
     cumulativeSize,
     venueSplit,
+    isFilled = false,
+    isWall = false,
 }: Props) {
     const { price, size, venue } = level
     const sizeNum = parseFloat(size)
@@ -50,7 +56,7 @@ function BookRowComponent({
     return (
         <div
             ref={rowRef}
-            className="relative flex cursor-default items-center gap-2 px-3 py-[5px] transition-colors duration-100 hover:bg-white/3"
+            className={`relative flex cursor-default items-center gap-2 px-3 py-[5px] transition-colors duration-100 hover:bg-white/3 ${isFilled ? "border-l-2 border-yellow-400/50" : ""}`}
             aria-label={`${isBid ? "Bid" : "Ask"} ${formatPrice(price)} size ${formatSize(size)}`}
             title={cumTitle}
         >
@@ -65,6 +71,11 @@ function BookRowComponent({
                 }}
             />
 
+            {/* Fill overlay */}
+            {isFilled && (
+                <div className="absolute inset-0 pointer-events-none z-0 bg-yellow-400/6" />
+            )}
+
             {/* Price */}
             <span
                 className={`z-10 w-14 font-mono text-sm font-medium ${isBid ? "text-green-400" : "text-red-400"}`}
@@ -72,11 +83,16 @@ function BookRowComponent({
                 {formatPrice(price)}
             </span>
 
-            {/* Size */}
+            {/* Size — bold + wall label when liquidity wall */}
             <span
-                className="z-10 flex-1 text-right font-mono text-sm text-zinc-300"
+                className={`z-10 flex flex-1 items-center justify-end gap-1.5 font-mono text-sm ${isWall ? "text-orange-300" : "text-zinc-300"}`}
                 aria-live="polite"
             >
+                {isWall && (
+                    <span className="text-[9px] font-semibold tracking-wider uppercase text-orange-400/70">
+                        wall
+                    </span>
+                )}
                 {formatSize(size)}
             </span>
 

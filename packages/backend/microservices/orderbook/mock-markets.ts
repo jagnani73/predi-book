@@ -37,30 +37,38 @@ export function generateMockBooks(): {
     mockCentre += (Math.random() - 0.5) * 0.002;
     mockCentre = Math.max(0.15, Math.min(0.85, mockCentre));
 
-    const jitter = () => (Math.random() - 0.5) * 0.01;
     const size = () => (Math.random() * 900 + 100).toFixed(0);
 
     // §8.1 — variable depth levels per venue
     const polyDepth = Math.floor(Math.random() * 4) + 2; // 2–5
     const kalshiDepth = Math.floor(Math.random() * 3) + 2; // 2–4
 
+    // Polymarket has an exclusive best level (0.02); inner levels are shared
+    // with Kalshi so fills walk across both venues on larger orders.
     const polyOffsets = [0.02, 0.04, 0.06, 0.08, 0.11].slice(0, polyDepth);
-    const kalshiOffsets = [0.03, 0.05, 0.08, 0.12].slice(0, kalshiDepth);
+    const kalshiOffsets = [0.04, 0.06, 0.08, 0.12].slice(0, kalshiDepth);
+
+    // Round to prediction-market tick (0.01) so shared offsets produce identical
+    // price strings — mergeLevels then tags them as "both" venue levels.
+    const px = (raw: number) =>
+        parseFloat(
+            Math.max(0.01, Math.min(0.99, raw)).toFixed(2),
+        ).toFixed(2);
 
     let polyBids = polyOffsets.map((d) => ({
-        price: Math.max(0.01, mockCentre - d + jitter()).toFixed(4),
+        price: px(mockCentre - d),
         size: size(),
     }));
     let polyAsks = polyOffsets.map((d) => ({
-        price: Math.min(0.99, mockCentre + d + jitter()).toFixed(4),
+        price: px(mockCentre + d),
         size: size(),
     }));
     let kalshiBids = kalshiOffsets.map((d) => ({
-        price: Math.max(0.01, mockCentre - d + jitter()).toFixed(4),
+        price: px(mockCentre - d),
         size: size(),
     }));
     let kalshiAsks = kalshiOffsets.map((d) => ({
-        price: Math.min(0.99, mockCentre + d + jitter()).toFixed(4),
+        price: px(mockCentre + d),
         size: size(),
     }));
 

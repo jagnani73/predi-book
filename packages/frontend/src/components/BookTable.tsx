@@ -8,6 +8,8 @@ type Props = {
     reversed?: boolean
     /** Raw venue books — used to compute per-venue split for "both" levels */
     venueBooks?: { polymarket: VenueBook; kalshi: VenueBook }
+    /** Prices (4dp string) consumed by the active quote simulation */
+    filledPrices?: Set<string>
 }
 
 function lookupVenueSize(
@@ -25,6 +27,7 @@ export function BookTable({
     side,
     reversed = false,
     venueBooks,
+    filledPrices,
 }: Props) {
     const filtered = levels.filter((l) => parseFloat(l.size) > 0)
     const maxSize = Math.max(...filtered.map((l) => parseFloat(l.size)), 0)
@@ -45,6 +48,11 @@ export function BookTable({
         running += parseFloat(l.size)
         return running
     })
+
+    // §R2-7 Liquidity wall: flag levels where size > 2× average
+    const avgSize =
+        filtered.reduce((acc, l) => acc + parseFloat(l.size), 0) / filtered.length
+    const wallThreshold = avgSize * 2
 
     const rows = reversed ? [...filtered].reverse() : filtered
     const cumRows = reversed ? [...cumulativeSizes].reverse() : cumulativeSizes
@@ -67,6 +75,11 @@ export function BookTable({
                     }
                 }
 
+                const isFilled = filledPrices?.has(
+                    parseFloat(level.price).toFixed(4),
+                ) ?? false
+                const isWall = parseFloat(level.size) >= wallThreshold
+
                 return (
                     <BookRow
                         key={level.price}
@@ -75,6 +88,8 @@ export function BookTable({
                         side={side}
                         cumulativeSize={cumRows[i]}
                         venueSplit={venueSplit}
+                        isFilled={isFilled}
+                        isWall={isWall}
                     />
                 )
             })}

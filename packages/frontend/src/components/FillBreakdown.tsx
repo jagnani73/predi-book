@@ -166,9 +166,17 @@ export function FillBreakdown({ result, midPrice, totalDepth }: Props) {
             )}
 
             {!result.fullyFilled && (
-                <p className="mt-1 font-mono text-[11px] text-yellow-500/80">
-                    ⚠ Book too thin — partial fill only
-                </p>
+                <div className="mt-1 flex items-center justify-between font-mono text-[11px]">
+                    <span className="text-yellow-500/80">
+                        ⚠ Insufficient liquidity — partial fill only
+                    </span>
+                    <span className="text-zinc-500">
+                        Max fillable{" "}
+                        <span className="text-zinc-300">
+                            {formatUsd(result.totalCost)}
+                        </span>
+                    </span>
+                </div>
             )}
         </div>
     )
