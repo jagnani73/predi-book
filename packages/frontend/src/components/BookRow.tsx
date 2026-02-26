@@ -19,7 +19,7 @@ const VENUE_STYLES = {
 const VENUE_LABELS = {
     polymarket: "PM",
     kalshi: "KX",
-    both: "AGG",
+    both: "BOTH",
 }
 
 function BookRowComponent({ level, maxSize, side }: Props) {
